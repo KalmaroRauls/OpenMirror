@@ -174,13 +174,26 @@ into an issue. Add `--serial <device>` to target a specific phone.
    will not let you enable both - so if the panel comes back, press **Screen off** again, which
    re-issues the request on the live session.
 4. **adb behaves strangely or hangs.** Something else owns the default adb server - usually a second
-   adb install on the same machine (Android Studio's `platform-tools`, or a phone tool that bundles
+   adb install on the same machine (Android Studio's `platform-tools`, or another tool that bundles
    one). The two then kill each other's server on port 5037 over and over, which looks like `adb server
    version (40) doesn't match this client (41)`, `protocol fault` or `connection reset`, and every one
    of those kills takes the connections you had established with it. OpenMirror self-heals onto its own
-   server (see above), which no other tool touches, and re-connects the Wi-Fi transport by itself. To
-   be rid of the culprit for good, uninstall that copy of platform-tools (or keep it off `PATH`),
-   reboot, or stop the offending process from an elevated prompt.
+   server (see above), which no other tool touches, and re-connects the Wi-Fi transport by itself.
+
+   To see what you are sharing the machine with:
+
+   ```powershell
+   Get-ChildItem 'C:\Program Files','C:\Program Files (x86)','C:\ProgramData',$env:LOCALAPPDATA `
+     -Recurse -Filter adb.exe -ErrorAction SilentlyContinue | Select-Object FullName
+   ```
+
+   A display, streaming or "use your tablet as a monitor" tool is a common hit here, and if it runs its
+   adb from a *service* the fight is worse: the service is elevated, so you cannot see which process it
+   is, cannot kill it without the rights, and it re-runs its adb every few seconds (`adb forward tcp:...`)
+   for as long as it wants a device. Its own log usually records exactly that - and the phone starts
+   asking to authorise an unfamiliar key again, because a service uses a different `.android` folder.
+   In an elevated prompt, `Stop-Service <name>` and then `Set-Service <name> -StartupType Manual` stops
+   the fighting while still letting you run that tool when you want it - or just uninstall it.
 5. **Wireless drops out, or the device list empties right after you enable TCP/IP.** Switching adbd to
    TCP mode restarts it, and that takes the USB transport - plus any Wi-Fi transport - with it, so for
    a moment the phone has no connection at all. **1. Enable TCP/IP (USB)** now waits for the phone to
