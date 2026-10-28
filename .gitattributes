@@ -1,0 +1,6 @@
+# Keep the working tree consistent on Windows and elsewhere: text files get normalised in
+# the repository, and the generated art stays binary.
+* text=auto
+*.ico binary
+*.png binary
+*.mp4 binary

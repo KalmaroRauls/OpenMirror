@@ -1,0 +1,14 @@
+# Build output, the mirroring engine downloaded by setup-engine.ps1, logs and captures.
+# Nothing generated is tracked: clone, run .\setup-engine.ps1, then .\build.ps1.
+bin/
+
+# Local captures and logs
+*.mp4
+*.log
+*.txt.tmp
+
+# IDE / Visual Studio noise
+.vs/
+*.user
+*.suo
+*.userprefs
