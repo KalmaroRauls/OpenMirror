@@ -48,6 +48,7 @@ namespace OpenMirror
         /// </summary>
         public static int ActivePort;
         public const int PrivatePort = 5057;
+        private static DateTime _nextRecheck = DateTime.MinValue;
 
         public Adb(string adbPath, Action<string> log)
         {
@@ -57,6 +58,20 @@ namespace OpenMirror
 
         /// <summary>Arguments that pin adb to our own server, once we had to switch.</summary>
         public string AdbFlag() { return ActivePort > 0 ? ("-P " + ActivePort + " ") : ""; }
+
+        /// <summary>
+        /// Gives the default port another chance after we stepped aside to the private one: the
+        /// server that made us move may be gone, and a phone that came free meanwhile should be
+        /// picked up without restarting the app. Throttled, because a culprit that refuses to die
+        /// would otherwise be retried on every refresh.
+        /// </summary>
+        public void RecheckDefaultPort()
+        {
+            if (DateTime.UtcNow < _nextRecheck) { return; }
+            _nextRecheck = DateTime.UtcNow.AddSeconds(30);
+            _switched = false;
+            ActivePort = 0;
+        }
 
         internal sealed class Result
         {
@@ -68,15 +83,43 @@ namespace OpenMirror
         }
 
         /// <summary>
+        /// True when the failure is an out-of-date server on the default port. adb kills such a
+        /// server and starts its own in its place, so the port itself is fine - which matters,
+        /// because only the server that reached the phone first owns its USB handle.
+        /// </summary>
+        private static bool StaleServer(Result result)
+        {
+            return result.All.IndexOf("doesn't match this client", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>
         /// Runs adb and captures text output. Never throws. If the first attempt fails in a
-        /// way that points at an unusable default adb server, the command is retried once
-        /// against a private server port.
+        /// way that points at an unusable default adb server, the command is retried once:
+        /// on the default port when the server there is merely out of date, otherwise on a
+        /// private port.
         /// </summary>
         public Result Run(string arguments, int timeoutMs)
         {
             Result result = RunOnce(arguments, timeoutMs);
             if (!_switched && ServerLooksBroken(result))
             {
+                // An out-of-date server on 5037 is worth taking over rather than dodging. Our own
+                // client replaces it, keeps the port, and keeps the device visible; stepping aside
+                // to a private port leaves a phone that another adb already holds invisible to us.
+                if (StaleServer(result))
+                {
+                    Result reclaimed = RunOnce(arguments, timeoutMs);
+                    if (reclaimed.ExitCode == 0)
+                    {
+                        _switched = true;
+                        if (_log != null)
+                        {
+                            _log("[adb] took port 5037 over from an out-of-date adb server and kept using it");
+                        }
+                        return reclaimed;
+                    }
+                    if (_log != null) { _log("[adb] could not take port 5037 over: " + Preview(reclaimed.All)); }
+                }
                 _switched = true;
                 ActivePort = PrivatePort;
                 if (_log != null)

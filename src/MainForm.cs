@@ -305,6 +305,19 @@ namespace OpenMirror
             if (_adb == null) { return; }
             string previous = SelectedSerial();
             List<AdbDevice> devices = _adb.Devices();
+            if (devices.Count == 0 && Adb.ActivePort > 0)
+            {
+                // Nothing on the private port usually means a server elsewhere owns the phone's USB
+                // handle - and that server may have gone since. Try the default port again instead
+                // of staying blind for the rest of the session.
+                _adb.RecheckDefaultPort();
+                List<AdbDevice> retry = _adb.Devices();
+                if (retry.Count > 0)
+                {
+                    devices = retry;
+                    Log("[adb] the default port has it again - back on 5037");
+                }
+            }
             _deviceBox.Items.Clear();
             int selectIndex = -1;
             int index = 0;
@@ -315,7 +328,18 @@ namespace OpenMirror
                 index++;
             }
             if (selectIndex >= 0) { _deviceBox.SelectedIndex = selectIndex; }
-            if (devices.Count == 0 && !_engine.Running) { SetStatus("no devices - connect USB or use wireless debugging"); }
+            if (devices.Count == 0 && !_engine.Running)
+            {
+                SetStatus("no devices - connect USB or use wireless debugging");
+                if (Adb.ActivePort > 0)
+                {
+                    // The usual cause for an empty list on the private port is not the phone at all:
+                    // a server somewhere else reached it first and owns its USB handle. Say so.
+                    Log("[adb] port " + Adb.ActivePort + " sees no devices even though this app is talking to adb fine: " +
+                        "another adb server may still hold the phone's USB handle. Close other phone tools (or reboot), " +
+                        "then press Refresh.");
+                }
+            }
         }
 
         private string SelectedSerial()

@@ -158,21 +158,27 @@ into an issue. Add `--serial <device>` to target a specific phone.
    the *Allow USB debugging* prompt accepted. If the phone shows up as `unauthorized`, accept the
    prompt (or revoke the USB debugging authorisations and re-plug). Most phones need no extra
    Windows driver; if yours enumerates as an unknown device, install the vendor's USB driver.
-2. **Screen-off on OnePlus/OxygenOS**: the engine confirms the panel is switched off, but the
+2. **The list stays empty though the phone is unlocked, plugged in and authorised.** Something else
+   reached the phone first: a second adb server - often left behind by a phone tool you have since
+   removed - is holding its USB handle, and Windows hands that handle out once. If the server is only
+   out of date OpenMirror takes the port over itself (the log says so). If it cannot - a server started
+   elevated cannot be replaced without the rights - stop it yourself (reboot, or end the process from an
+   elevated prompt) and press **Refresh**. The log names the port it was looking on.
+3. **Screen-off on OnePlus/OxygenOS**: the engine confirms the panel is switched off, but the
    manufacturer's software may wake it on its own. Keep-awake is the usual culprit - and the UI
    will not let you enable both - so if the panel comes back, press **Screen off** again, which
    re-issues the request on the live session.
-3. **adb behaves strangely or hangs.** Something else owns the default adb server. OpenMirror
+4. **adb behaves strangely or hangs.** Something else owns the default adb server. OpenMirror
    self-heals onto its own server (see above); if you want the culprit gone for good, reboot, or
    stop the offending process from an elevated prompt.
-4. **Wireless stops working after a phone reboot.** TCP/IP mode is not persistent. Plug the cable in
+5. **Wireless stops working after a phone reboot.** TCP/IP mode is not persistent. Plug the cable in
    once, use **Wireless...** again, unplug.
-5. **A build cannot replace `bin\OpenMirror.exe`.** Another process holds the file open; run
+6. **A build cannot replace `bin\OpenMirror.exe`.** Another process holds the file open; run
    `.\tools\WhoLocks.ps1 -Path ..\bin\OpenMirror.exe` and it will name it. OpenMirror itself can hold
    it if it is running, and so can a shell that has `LoadFile()`-ed the exe.
-6. **Engine download fails.** `.\setup-engine.ps1 -Force` retries; `-ScrcpyVersion <x.y.z>` pins a
+7. **Engine download fails.** `.\setup-engine.ps1 -Force` retries; `-ScrcpyVersion <x.y.z>` pins a
    different release; you can also drop the official zip into `bin\engine` yourself and re-run it.
-7. **Headless mode ignores keep-awake/screen-off.** Deliberate: the engine refuses those flags when
+8. **Headless mode ignores keep-awake/screen-off.** Deliberate: the engine refuses those flags when
    control is disabled, which is what makes headless a clean pipeline test.
 
 More detail - including exactly what was verified on the machine this was written on, and how - is
