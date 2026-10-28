@@ -141,6 +141,11 @@ namespace OpenMirror
             if (text.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0) { return true; }
             if (text.IndexOf("doesn't match this client", StringComparison.OrdinalIgnoreCase) >= 0) { return true; }
             if (text.IndexOf("cannot connect to daemon", StringComparison.OrdinalIgnoreCase) >= 0) { return true; }
+            // A server that resets the connection mid-request is just as unusable, and that is what
+            // two adb installs on one machine look like: each one kills the other's server on the
+            // default port, and every kill takes all established transports with it.
+            if (text.IndexOf("protocol fault", StringComparison.OrdinalIgnoreCase) >= 0) { return true; }
+            if (text.IndexOf("connection reset", StringComparison.OrdinalIgnoreCase) >= 0) { return true; }
             return false;
         }
 
@@ -326,6 +331,36 @@ namespace OpenMirror
 
         /// <summary>Android 11+ wireless debugging pairing.</summary>
         public Result Pair(string hostPort, string code) { return Run("pair " + hostPort + " " + code, 60000); }
+
+        /// <summary>
+        /// Connects, retrying while the phone finishes switching to TCP mode. `adb tcpip` restarts
+        /// adbd, so a connect issued straight afterwards can be refused for a second or two.
+        /// </summary>
+        public Result ConnectRetry(string hostPort, int attempts, int delayMs)
+        {
+            Result last = null;
+            for (int i = 0; i < attempts; i++)
+            {
+                last = Connect(hostPort);
+                if (ConnectSucceeded(last)) { return last; }
+                if (i < attempts - 1) { System.Threading.Thread.Sleep(delayMs); }
+            }
+            return last;
+        }
+
+        /// <summary>
+        /// True when `adb connect` actually established the transport. adb reports that in its text
+        /// ("connected to ...", "failed to connect to ...") rather than in its exit code.
+        /// </summary>
+        public static bool ConnectSucceeded(Result result)
+        {
+            if (result == null) { return false; }
+            string text = result.All;
+            if (text.IndexOf("failed", StringComparison.OrdinalIgnoreCase) >= 0) { return false; }
+            if (text.IndexOf("cannot", StringComparison.OrdinalIgnoreCase) >= 0) { return false; }
+            if (text.IndexOf("refused", StringComparison.OrdinalIgnoreCase) >= 0) { return false; }
+            return text.IndexOf("connected to", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
 
         // ---- device queries ----------------------------------------------------
         public string GetProp(string serial, string prop)

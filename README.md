@@ -121,11 +121,16 @@ you like minimising OpenMirror but still watching the phone; minimising while do
 automatically, and restoring docks it back. *Compact view* (`Ctrl+M`) hides the side panel. `F11`
 or the fullscreen button keeps only the phone screen; `Esc` leaves it.
 
-**Wireless.** Open the **Wireless...** dialog once with the cable plugged in: it switches the phone
-to TCP/IP mode, reads the phone's Wi-Fi address (preferring the real WLAN interface over a VPN), and
-connects over the network. From then on you can unplug. There are buttons to disconnect and to put
-the phone back into USB mode, plus Android 11+ pairing if you use the phone's own wireless
-debugging. Note that TCP/IP mode does not survive a phone reboot - plug in once again and repeat.
+**Wireless.** Open the **Wireless...** dialog once with the cable plugged in and press **1. Enable
+TCP/IP (USB)**: it reads the phone's Wi-Fi address (preferring the real WLAN interface over a VPN),
+switches the phone to TCP/IP mode, and then connects over the network itself. That is the one moment
+the cable is needed, because switching adbd to TCP mode drops the USB transport with it. The address
+is remembered, and a Wi-Fi transport is a connection adb has to be told to make rather than something
+it discovers - so if it is dropped (a `tcpip` restart, or another adb on the machine killing the server
+that held it) OpenMirror re-issues the connect by itself instead of losing the phone. There are buttons
+to disconnect and to put the phone back into USB mode, plus Android 11+ pairing if you use the phone's
+own wireless debugging. Note that TCP/IP mode does not survive a phone reboot - plug in once again and
+repeat.
 
 **Key mapping.** Load a profile, tick *Enable mapping*, and tick *Overlay* to see where your mapped
 controls sit. The overlay is click-through and always on top, so you can drag it over the mirror
@@ -168,17 +173,28 @@ into an issue. Add `--serial <device>` to target a specific phone.
    manufacturer's software may wake it on its own. Keep-awake is the usual culprit - and the UI
    will not let you enable both - so if the panel comes back, press **Screen off** again, which
    re-issues the request on the live session.
-4. **adb behaves strangely or hangs.** Something else owns the default adb server. OpenMirror
-   self-heals onto its own server (see above); if you want the culprit gone for good, reboot, or
-   stop the offending process from an elevated prompt.
-5. **Wireless stops working after a phone reboot.** TCP/IP mode is not persistent. Plug the cable in
+4. **adb behaves strangely or hangs.** Something else owns the default adb server - usually a second
+   adb install on the same machine (Android Studio's `platform-tools`, or a phone tool that bundles
+   one). The two then kill each other's server on port 5037 over and over, which looks like `adb server
+   version (40) doesn't match this client (41)`, `protocol fault` or `connection reset`, and every one
+   of those kills takes the connections you had established with it. OpenMirror self-heals onto its own
+   server (see above), which no other tool touches, and re-connects the Wi-Fi transport by itself. To
+   be rid of the culprit for good, uninstall that copy of platform-tools (or keep it off `PATH`),
+   reboot, or stop the offending process from an elevated prompt.
+5. **Wireless drops out, or the device list empties right after you enable TCP/IP.** Switching adbd to
+   TCP mode restarts it, and that takes the USB transport - plus any Wi-Fi transport - with it, so for
+   a moment the phone has no connection at all. **1. Enable TCP/IP (USB)** now waits for the phone to
+   answer on TCP and attaches it again; if it is still missing, press **2. Connect over Wi-Fi** once
+   and read the log: `not answering` means nothing is listening (TCP/IP mode does not survive a
+   reboot), `connection reset` means the adb war described in the item above.
+6. **Wireless stops working after a phone reboot.** TCP/IP mode is not persistent. Plug the cable in
    once, use **Wireless...** again, unplug.
-6. **A build cannot replace `bin\OpenMirror.exe`.** Another process holds the file open; run
+7. **A build cannot replace `bin\OpenMirror.exe`.** Another process holds the file open; run
    `.\tools\WhoLocks.ps1 -Path ..\bin\OpenMirror.exe` and it will name it. OpenMirror itself can hold
    it if it is running, and so can a shell that has `LoadFile()`-ed the exe.
-7. **Engine download fails.** `.\setup-engine.ps1 -Force` retries; `-ScrcpyVersion <x.y.z>` pins a
+8. **Engine download fails.** `.\setup-engine.ps1 -Force` retries; `-ScrcpyVersion <x.y.z>` pins a
    different release; you can also drop the official zip into `bin\engine` yourself and re-run it.
-8. **Headless mode ignores keep-awake/screen-off.** Deliberate: the engine refuses those flags when
+9. **Headless mode ignores keep-awake/screen-off.** Deliberate: the engine refuses those flags when
    control is disabled, which is what makes headless a clean pipeline test.
 
 More detail - including exactly what was verified on the machine this was written on, and how - is

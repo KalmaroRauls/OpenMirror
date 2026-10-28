@@ -1,5 +1,7 @@
 using System;
 using System.Drawing;
+using System.IO;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 namespace OpenMirror
@@ -100,6 +102,7 @@ namespace OpenMirror
             string host = _hostBox.Text.Trim();
             string port = _portBox.Text.Trim();
             string target = host.Length == 0 ? "" : (host + ":" + port);
+            string followUp = "";
             Adb.Result result = null;
 
             if (action == "tcpip")
@@ -107,25 +110,49 @@ namespace OpenMirror
                 if (serial.Length == 0) { Say("select a USB device in the main window first"); return; }
                 int portNumber;
                 if (!int.TryParse(port, out portNumber)) { portNumber = 5555; }
+                // Read the address while the cable still works: switching adbd to TCP mode takes the
+                // USB transport away, and after that there is no device left to ask for it.
+                if (host.Length == 0)
+                {
+                    Detect();
+                    host = _hostBox.Text.Trim();
+                    target = host.Length == 0 ? "" : (host + ":" + port);
+                }
                 Say("switching " + serial + " to TCP mode on port " + portNumber + " ...");
                 result = _adb.EnableTcpip(serial, portNumber);
+                if (result.Ok)
+                {
+                    // adbd restarts to make that switch, which drops the transport with it, so
+                    // re-attach over the network here rather than leaving the main window empty.
+                    if (target.Length == 0)
+                    {
+                        Say("switched, but no Wi-Fi address is known - Detect once USB is back, then Connect");
+                    }
+                    else
+                    {
+                        followUp = target;
+                    }
+                }
             }
             else if (action == "connect")
             {
                 if (target.Length == 0) { Say("enter the phone's address first"); return; }
-                Say("connecting to " + target + " ...");
-                result = _adb.Connect(target);
+                followUp = target;
             }
             else if (action == "disconnect")
             {
                 if (target.Length == 0) { Say("enter the phone's address first"); return; }
                 result = _adb.Disconnect(target);
+                // Deliberately disconnected: stop remembering it, or the app would reconnect straight
+                // back and the button would look broken.
+                WirelessStore.ClearAddress();
             }
             else if (action == "usb")
             {
                 if (serial.Length == 0) { Say("enter the device serial of the USB connection"); return; }
                 Say("restoring USB mode on " + serial + " ...");
                 result = _adb.Run(Adb.DeviceFlag(serial) + " usb", 20000);
+                if (result.Ok) { WirelessStore.ClearAddress(); }
             }
             else if (action == "pair")
             {
@@ -141,6 +168,38 @@ namespace OpenMirror
                 _log("[wireless] " + action + " -> " + Adb.Preview(result.All));
             }
             if (_onChanged != null) { _onChanged(); }
+            if (followUp.Length > 0) { ConnectAsync(followUp); }
+        }
+
+        /// <summary>
+        /// Connects on a worker thread. adb sits on an address that does not answer for about twenty
+        /// seconds, and a dialog that stops repainting while it waits looks like it has hung, so the
+        /// wait belongs off the UI thread and the results are posted back to it.
+        /// </summary>
+        private void ConnectAsync(string target)
+        {
+            Say("connecting to " + target + " ...");
+            _status.Text = "connecting ...";
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate(object state)
+            {
+                Adb.Result result = _adb.ConnectRetry(target, 3, 1500);
+                bool connected = Adb.ConnectSucceeded(result);
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        Say(result.All.Length == 0 ? "(no output)" : Adb.Preview(result.All));
+                        _status.Text = connected ? "connected" : "not connected";
+                        if (connected)
+                        {
+                            WirelessStore.SaveAddress(target);
+                            Say("wireless is up - the cable is not needed any more, and this address is remembered");
+                        }
+                        if (_onChanged != null) { _onChanged(); }
+                    });
+                }
+                catch { }
+            });
         }
 
         /// <summary>Reads the phone's Wi-Fi address so it does not have to be hunted down.</summary>
@@ -206,5 +265,51 @@ namespace OpenMirror
             Controls.Add(b);
             return b;
         }
+    }
+
+    /// <summary>Saved shape of bin\profiles\wireless.json.</summary>
+    internal sealed class WirelessEntry
+    {
+        public string Address = "";
+    }
+
+    /// <summary>
+    /// Remembers the Wi-Fi address that last worked. A Wi-Fi transport is not something adb
+    /// discovers, it is a connection adb was told to make, and it only exists while some adb server
+    /// holds it - which another adb on the same machine can take away by killing that server. So the
+    /// address is kept and the app re-issues the connect itself, rather than asking for it again.
+    /// </summary>
+    internal static class WirelessStore
+    {
+        private static string FilePath()
+        {
+            return Path.Combine(KeyMapStore.ProfilesDirectory(), "wireless.json");
+        }
+
+        public static string LoadAddress()
+        {
+            try
+            {
+                string path = FilePath();
+                if (!File.Exists(path)) { return ""; }
+                JavaScriptSerializer ser = new JavaScriptSerializer();
+                WirelessEntry entry = ser.Deserialize<WirelessEntry>(File.ReadAllText(path));
+                if (entry == null || entry.Address == null) { return ""; }
+                return entry.Address.Trim();
+            }
+            catch { return ""; }
+        }
+
+        public static void SaveAddress(string address)
+        {
+            try
+            {
+                JavaScriptSerializer ser = new JavaScriptSerializer();
+                File.WriteAllText(FilePath(), ser.Serialize(new WirelessEntry { Address = address }));
+            }
+            catch { }
+        }
+
+        public static void ClearAddress() { SaveAddress(""); }
     }
 }

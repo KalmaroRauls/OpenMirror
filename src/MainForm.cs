@@ -47,6 +47,9 @@ namespace OpenMirror
         private bool _compact;
         private bool _fullscreen;
         private bool _reembedAfterRestore;
+        private string _wirelessAddress = "";
+        private DateTime _nextWirelessRetry = DateTime.MinValue;
+        private bool _wirelessRetryRunning;
 
         public MainForm(string engineRoot)
         {
@@ -73,6 +76,7 @@ namespace OpenMirror
                 else if (e.KeyCode == Keys.Escape && _fullscreen) { LeaveFullscreen(); e.Handled = true; }
             };
 
+            _wirelessAddress = WirelessStore.LoadAddress();
             LoadEngine();
             RefreshDevices();
             LoadProfiles();
@@ -318,15 +322,10 @@ namespace OpenMirror
                     Log("[adb] the default port has it again - back on 5037");
                 }
             }
+            if (OnlineCount(devices) == 0 && !_engine.Running) { devices = ReconnectWireless(devices); }
             _deviceBox.Items.Clear();
-            int selectIndex = -1;
-            int index = 0;
-            foreach (AdbDevice d in devices)
-            {
-                _deviceBox.Items.Add(d);
-                if (d.Serial == previous || (selectIndex < 0 && d.State == "device")) { selectIndex = index; }
-                index++;
-            }
+            foreach (AdbDevice d in devices) { _deviceBox.Items.Add(d); }
+            int selectIndex = PreferredIndex(devices, previous);
             if (selectIndex >= 0) { _deviceBox.SelectedIndex = selectIndex; }
             if (devices.Count == 0 && !_engine.Running)
             {
@@ -340,6 +339,73 @@ namespace OpenMirror
                         "then press Refresh.");
                 }
             }
+        }
+
+        /// <summary>How many of these devices are actually usable.</summary>
+        private static int OnlineCount(List<AdbDevice> devices)
+        {
+            int count = 0;
+            foreach (AdbDevice d in devices) { if (d.State == "device") { count++; } }
+            return count;
+        }
+
+        /// <summary>
+        /// Which entry to select: the previous choice while it is still online, else the Wi-Fi
+        /// transport this app connected to, else the first usable device. Preferring the remembered
+        /// Wi-Fi serial is what keeps a wireless session wireless when the cable is also plugged in.
+        /// </summary>
+        private int PreferredIndex(List<AdbDevice> devices, string previous)
+        {
+            int firstOnline = -1;
+            for (int i = 0; i < devices.Count; i++)
+            {
+                AdbDevice d = devices[i];
+                if (d.State != "device") { continue; }
+                if (d.Serial == previous) { return i; }
+                if (_wirelessAddress.Length > 0 && string.Equals(d.Serial, _wirelessAddress, StringComparison.OrdinalIgnoreCase)) { return i; }
+                if (firstOnline < 0) { firstOnline = i; }
+            }
+            return firstOnline;
+        }
+
+        /// <summary>
+        /// A Wi-Fi transport is a connection adb was told to make, not something it discovers, and it
+        /// only lives while some adb server holds it: another adb install on the machine killing that
+        /// server, or a tcpip restart, drops it. So re-issue the connect that worked last time rather
+        /// than asking for the address again. Throttled, so an absent phone is retried, not hammered.
+        /// </summary>
+        private List<AdbDevice> ReconnectWireless(List<AdbDevice> devices)
+        {
+            if (_wirelessAddress.Length == 0 || _wirelessRetryRunning || DateTime.UtcNow < _nextWirelessRetry) { return devices; }
+            _nextWirelessRetry = DateTime.UtcNow.AddSeconds(15);
+            _wirelessRetryRunning = true;
+            string address = _wirelessAddress;
+            // Off the UI thread: adb sits on an address that does not answer for about twenty seconds,
+            // and the window must not stop repainting while it does.
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate(object state)
+            {
+                Adb.Result result = _adb.Connect(address);
+                bool connected = Adb.ConnectSucceeded(result);
+                string text = Adb.Preview(result.All);
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        _wirelessRetryRunning = false;
+                        if (connected)
+                        {
+                            Log("[wireless] reconnected to " + address);
+                            RefreshDevices();
+                        }
+                        else
+                        {
+                            Log("[wireless] " + address + " is not answering: " + text);
+                        }
+                    });
+                }
+                catch { _wirelessRetryRunning = false; }
+            });
+            return devices;
         }
 
         private string SelectedSerial()
@@ -687,7 +753,13 @@ namespace OpenMirror
             WirelessForm dialog = new WirelessForm(_adb,
                 delegate { return SelectedSerial(); },
                 Log,
-                delegate { RefreshDevices(); });
+                delegate
+                {
+                    // The dialog saves whichever wireless address worked; take it from there, because
+                    // that is what the refresh loop reconnects to when the transport disappears.
+                    _wirelessAddress = WirelessStore.LoadAddress();
+                    RefreshDevices();
+                });
             dialog.Show(this);
         }
 
